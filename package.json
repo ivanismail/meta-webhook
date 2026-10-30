@@ -1,0 +1,14 @@
+{
+  "name": "meta-webhook",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Meta WhatsApp webhook and messaging API",
+  "main": "app.js",
+  "scripts": {
+    "start": "node app.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "mysql2": "^3.14.0"
+  }
+}
