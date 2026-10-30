@@ -1,3 +1,4 @@
+require('dotenv').config();
 // Import Express.js
 const express = require('express');
 const mysql = require('mysql2/promise');
@@ -115,6 +116,99 @@ app.post('/send-message', async (req, res) => {
   } catch (error) {
     console.error('Failed to send WhatsApp message:', error);
     return res.status(500).json({ error: 'Failed to send WhatsApp message' });
+  }
+});
+
+app.post('/send-media', async (req, res) => {
+  const { session, number, message, media } = req.body || {};
+  if (
+    typeof session !== 'string' || !session.trim() ||
+    typeof number !== 'string' || !number.trim() ||
+    typeof message !== 'string' || !message.trim() ||
+    typeof media !== 'string' || !media.trim()
+  ) {
+    return res.status(400).json({
+      error: 'session, number, message, and media must be non-empty strings',
+    });
+  }
+
+  let mediaUrl;
+  try {
+    mediaUrl = new URL(media);
+  } catch (error) {
+    return res.status(400).json({ error: 'media must be a valid HTTPS URL' });
+  }
+  if (mediaUrl.protocol !== 'https:') {
+    return res.status(400).json({ error: 'media must be a valid HTTPS URL' });
+  }
+
+  const accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
+  if (!accessToken) {
+    return res.status(503).json({ error: 'WhatsApp access token is not configured' });
+  }
+
+  try {
+    const [sessions] = await db.execute(
+      'SELECT phone_number_id FROM whatsapp_sessions WHERE session = ? LIMIT 1',
+      [session.trim()]
+    );
+    if (sessions.length === 0) {
+      return res.status(404).json({ error: 'WhatsApp session not found' });
+    }
+
+    const phoneNumberId = sessions[0].phone_number_id;
+    if (!phoneNumberId) {
+      return res.status(500).json({ error: 'Session has no phone_number_id' });
+    }
+
+    let response;
+    try {
+      response = await fetch(
+        `https://graph.facebook.com/v25.0/${encodeURIComponent(phoneNumberId)}/messages`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            messaging_product: 'whatsapp',
+            recipient_type: 'individual',
+            to: number.trim(),
+            type: 'image',
+            image: {
+              link: mediaUrl.toString(),
+              caption: message,
+            },
+          }),
+        }
+      );
+    } catch (error) {
+      console.error('WhatsApp API request failed:', error);
+      return res.status(502).json({ error: 'Could not reach WhatsApp API' });
+    }
+
+    const responseText = await response.text();
+    let responseBody;
+    try {
+      responseBody = responseText ? JSON.parse(responseText) : {};
+    } catch (error) {
+      console.error('WhatsApp API returned invalid JSON:', error);
+      return res.status(502).json({ error: 'WhatsApp API returned an invalid response' });
+    }
+
+    if (!response.ok) {
+      console.error('WhatsApp API returned an error:', response.status, responseBody);
+      return res.status(502).json({
+        error: 'WhatsApp API request failed',
+        details: responseBody,
+      });
+    }
+
+    return res.status(200).json(responseBody);
+  } catch (error) {
+    console.error('Failed to send WhatsApp media:', error);
+    return res.status(500).json({ error: 'Failed to send WhatsApp media' });
   }
 });
 

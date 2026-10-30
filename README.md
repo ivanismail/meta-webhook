@@ -27,3 +27,17 @@ Request body:
 ```
 
 The request uses `number` as the recipient and `message` as the text body.
+
+## Send an image
+
+`POST /send-media` sends an image using the `media` HTTPS URL. The `message`
+value is used as the image caption.
+
+```json
+{
+  "session": "tenant-1-customer-service",
+  "number": "6282113032503",
+  "message": "test bro",
+  "media": "https://picsum.photos/id/237/1200/800.jpg"
+}
+```
