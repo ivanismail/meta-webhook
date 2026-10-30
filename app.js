@@ -60,7 +60,7 @@ app.post('/send-message', async (req, res) => {
 
   try {
     const [sessions] = await db.execute(
-      'SELECT phone_number_id FROM whatsapp_sessions WHERE session = ? LIMIT 1',
+      'SELECT phone_number_id FROM whatsapp_sessions WHERE session_id = ? LIMIT 1',
       [session.trim()]
     );
     if (sessions.length === 0) {
@@ -149,7 +149,7 @@ app.post('/send-media', async (req, res) => {
 
   try {
     const [sessions] = await db.execute(
-      'SELECT phone_number_id FROM whatsapp_sessions WHERE session = ? LIMIT 1',
+      'SELECT phone_number_id FROM whatsapp_sessions WHERE session_id = ? LIMIT 1',
       [session.trim()]
     );
     if (sessions.length === 0) {
