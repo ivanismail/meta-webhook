@@ -99,12 +99,13 @@ async function forwardMetaMessage(message, metadata, contacts) {
 
 async function saveAccountUpdate(entry, event, wabaInfo) {
   const wabaId = wabaInfo.waba_id;
-  if (!wabaId) {
-    console.warn('Account update tidak memiliki WABA ID');
-    return;
+  const ownerBusinessId = wabaInfo.owner_business_id;
+  if (!wabaId || !ownerBusinessId) {
+    throw new Error(
+      'Account update requires both waba_id and owner_business_id'
+    );
   }
 
-  const ownerBusinessId = wabaInfo.owner_business_id || null;
   const eventTime = Number(entry.time);
   const eventTimestamp =
     Number.isFinite(eventTime) && eventTime > 0
@@ -117,34 +118,46 @@ async function saveAccountUpdate(entry, event, wabaInfo) {
   if (event === 'MM_LITE_TERMS_SIGNED') {
     updateSql = `
       UPDATE whatsapp_sessions
-      SET owner_business_id = COALESCE(?, owner_business_id),
+      SET waba_id = ?,
+          owner_business_id = ?,
           signup_status = 'terms_signed',
           terms_signed_at = COALESCE(terms_signed_at, FROM_UNIXTIME(?))
-      WHERE waba_id = ?
+      WHERE owner_business_id = ?
+        AND (waba_id IS NULL OR waba_id = ?)
     `;
-    values = [ownerBusinessId, eventTimestamp, wabaId];
+    values = [
+      wabaId,
+      ownerBusinessId,
+      eventTimestamp,
+      ownerBusinessId,
+      wabaId,
+    ];
   } else if (
     event === 'PARTNER_ADDED' ||
     event === 'PARTNER_APP_INSTALLED'
   ) {
     updateSql = `
       UPDATE whatsapp_sessions
-      SET owner_business_id = COALESCE(?, owner_business_id),
+      SET waba_id = ?,
+          owner_business_id = ?,
           signup_status = 'connected'
-      WHERE waba_id = ?
+      WHERE owner_business_id = ?
+        AND (waba_id IS NULL OR waba_id = ?)
     `;
-    values = [ownerBusinessId, wabaId];
+    values = [wabaId, ownerBusinessId, ownerBusinessId, wabaId];
   } else if (
     event === 'PARTNER_REMOVED' ||
     event === 'PARTNER_APP_UNINSTALLED'
   ) {
     updateSql = `
       UPDATE whatsapp_sessions
-      SET owner_business_id = COALESCE(?, owner_business_id),
+      SET waba_id = ?,
+          owner_business_id = ?,
           signup_status = 'disconnected'
-      WHERE waba_id = ?
+      WHERE owner_business_id = ?
+        AND (waba_id IS NULL OR waba_id = ?)
     `;
-    values = [ownerBusinessId, wabaId];
+    values = [wabaId, ownerBusinessId, ownerBusinessId, wabaId];
   } else {
     return;
   }
@@ -152,12 +165,15 @@ async function saveAccountUpdate(entry, event, wabaInfo) {
   const [result] = await db.execute(updateSql, values);
   if (result.affectedRows === 0) {
     const [sessions] = await db.execute(
-      'SELECT 1 FROM whatsapp_sessions WHERE waba_id = ? LIMIT 1',
-      [wabaId]
+      `SELECT 1 FROM whatsapp_sessions
+       WHERE owner_business_id = ?
+         AND (waba_id IS NULL OR waba_id = ?)
+       LIMIT 1`,
+      [ownerBusinessId, wabaId]
     );
     if (sessions.length === 0) {
       throw new Error(
-        `No whatsapp_sessions row found for waba_id ${wabaId}; ensure signup data is saved before processing account updates`
+        `No whatsapp_sessions row found for owner_business_id ${ownerBusinessId} with an empty or matching waba_id`
       );
     }
   }

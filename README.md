@@ -18,13 +18,15 @@ Forwarded message fields map from Meta as follows: `from` from the sender,
 caption, `type` from the message type, `t` from the Unix timestamp, and
 `pushName` from the matching contact profile.
 
-Account updates are saved to every `whatsapp_sessions` row matching `waba_id`.
-The existing Embedded Signup integration must save `session_id`,
-`phone_number_id`, and `waba_id` first. The webhook records `owner_business_id`,
-sets `signup_status` to `terms_signed`, `connected`, or `disconnected`, and
-sets `terms_signed_at` for `MM_LITE_TERMS_SIGNED`. If no row matches the WABA,
-the webhook returns HTTP 500 so the missing mapping is visible and Meta may
-retry the event.
+Account updates match `whatsapp_sessions` by `owner_business_id`, filling rows
+whose `waba_id` is empty and updating rows already associated with that WABA.
+This allows one business to have multiple WABAs without overwriting existing
+associations. The existing Embedded Signup integration must save
+`session_id`, `phone_number_id`, and `owner_business_id`. The webhook records
+`waba_id`, sets `signup_status` to `terms_signed`, `connected`, or
+`disconnected`, and sets `terms_signed_at` for `MM_LITE_TERMS_SIGNED`. If no
+row matches, the webhook returns HTTP 500 so the missing mapping is visible
+and Meta may retry the event.
 
 ## Send a WhatsApp message
 
