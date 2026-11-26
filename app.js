@@ -475,6 +475,21 @@ app.post('/send-media', async (req, res) => {
   }
 });
 
+
+//* PROOF
+const {
+  generateAppSecretProof
+} = require('./utils/meta');
+
+app.get('/test-proof', (req, res) => {
+  const proof = generateAppSecretProof();
+
+  res.json({
+    success: true,
+    proof
+  });
+});
+
 // Start the server
 app.listen(port, () => {
   console.log(`\nListening on port ${port}\n`);
