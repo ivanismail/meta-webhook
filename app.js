@@ -100,34 +100,116 @@ async function forwardMetaMessage(message, metadata, contacts) {
 // Route for POST requests
 app.post('/', async (req, res) => {
   const timestamp = new Date().toISOString().replace('T', ' ').slice(0, 19);
+
   console.log(`\n\nWebhook received ${timestamp}\n`);
   console.log(JSON.stringify(req.body, null, 2));
 
   try {
-    const entries = Array.isArray(req.body?.entry) ? req.body.entry : [];
+    const entries = Array.isArray(req.body?.entry)
+      ? req.body.entry
+      : [];
+
     const pendingMessages = [];
+
     for (const entry of entries) {
-      const changes = Array.isArray(entry.changes) ? entry.changes : [];
+      const changes = Array.isArray(entry.changes)
+        ? entry.changes
+        : [];
+
       for (const change of changes) {
+
+        // ==========================================
+        // 1. ACCOUNT UPDATE - HOSTED SIGNUP
+        // ==========================================
+        if (change?.field === 'account_update') {
+          const value = change.value || {};
+          const event = value.event;
+          const wabaInfo = value.waba_info || {};
+
+          console.log('\n========== ACCOUNT UPDATE ==========');
+          console.log('Event:', event);
+          console.log('WABA ID:', wabaInfo.waba_id || null);
+          console.log(
+            'Owner Business ID:',
+            wabaInfo.owner_business_id || null
+          );
+          console.log('Solution ID:', wabaInfo.solution_id || null);
+          console.log('====================================\n');
+
+          if (
+            event === 'PARTNER_ADDED' ||
+            event === 'PARTNER_APP_INSTALLED'
+          ) {
+            const wabaId = wabaInfo.waba_id;
+            const ownerBusinessId = wabaInfo.owner_business_id;
+
+            if (wabaId) {
+              console.log('SUCCESS: MITRA WHATSAPP TERHUBUNG');
+              console.log('WABA_ID:', wabaId);
+              console.log('CUSTOMER_BUSINESS_ID:', ownerBusinessId);
+
+              // TODO:
+              // Simpan wabaId dan ownerBusinessId ke database Hayaka.
+            } else {
+              console.warn('Account update tidak memiliki WABA ID');
+            }
+          }
+
+          if (
+            event === 'PARTNER_REMOVED' ||
+            event === 'PARTNER_APP_UNINSTALLED'
+          ) {
+            console.warn(
+              'PERHATIAN: Mitra mencabut akses WhatsApp:',
+              wabaInfo.waba_id
+            );
+
+            // TODO:
+            // Tandai koneksi mitra sebagai terputus di database.
+          }
+
+          continue;
+        }
+
+        // ==========================================
+        // 2. INBOUND MESSAGES
+        // ==========================================
         if (change?.field !== 'messages') continue;
 
         const value = change.value || {};
         const metadata = value.metadata || {};
-        const messages = Array.isArray(value.messages) ? value.messages : [];
-        const contacts = Array.isArray(value.contacts) ? value.contacts : [];
+        const messages = Array.isArray(value.messages)
+          ? value.messages
+          : [];
+        const contacts = Array.isArray(value.contacts)
+          ? value.contacts
+          : [];
 
         if (messages.length === 0) continue;
-        if (!metadata.phone_number_id || !metadata.display_phone_number) {
-          throw new Error('Meta message is missing phone number metadata');
+
+        if (
+          !metadata.phone_number_id ||
+          !metadata.display_phone_number
+        ) {
+          throw new Error(
+            'Meta message is missing phone number metadata'
+          );
         }
 
         for (const message of messages) {
-          pendingMessages.push({ message, metadata, contacts });
+          pendingMessages.push({
+            message,
+            metadata,
+            contacts
+          });
         }
       }
     }
 
-    if (pendingMessages.length === 0) return res.status(200).end();
+    // Tidak ada pesan masuk? Account update sudah diproses.
+    if (pendingMessages.length === 0) {
+      return res.status(200).end();
+    }
 
     if (!inboundWebhookApiKey) {
       console.error('INBOUND_WEBHOOK_API_KEY is not configured');
@@ -143,6 +225,7 @@ app.post('/', async (req, res) => {
     }
 
     return res.status(200).end();
+
   } catch (error) {
     console.error('Failed to process Meta webhook:', error);
     return res.status(500).end();
