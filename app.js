@@ -97,6 +97,72 @@ async function forwardMetaMessage(message, metadata, contacts) {
   }
 }
 
+async function saveAccountUpdate(entry, event, wabaInfo) {
+  const wabaId = wabaInfo.waba_id;
+  if (!wabaId) {
+    console.warn('Account update tidak memiliki WABA ID');
+    return;
+  }
+
+  const ownerBusinessId = wabaInfo.owner_business_id || null;
+  const eventTime = Number(entry.time);
+  const eventTimestamp =
+    Number.isFinite(eventTime) && eventTime > 0
+      ? eventTime
+      : Math.floor(Date.now() / 1000);
+
+  let updateSql;
+  let values;
+
+  if (event === 'MM_LITE_TERMS_SIGNED') {
+    updateSql = `
+      UPDATE whatsapp_sessions
+      SET owner_business_id = COALESCE(?, owner_business_id),
+          signup_status = 'terms_signed',
+          terms_signed_at = COALESCE(terms_signed_at, FROM_UNIXTIME(?))
+      WHERE waba_id = ?
+    `;
+    values = [ownerBusinessId, eventTimestamp, wabaId];
+  } else if (
+    event === 'PARTNER_ADDED' ||
+    event === 'PARTNER_APP_INSTALLED'
+  ) {
+    updateSql = `
+      UPDATE whatsapp_sessions
+      SET owner_business_id = COALESCE(?, owner_business_id),
+          signup_status = 'connected'
+      WHERE waba_id = ?
+    `;
+    values = [ownerBusinessId, wabaId];
+  } else if (
+    event === 'PARTNER_REMOVED' ||
+    event === 'PARTNER_APP_UNINSTALLED'
+  ) {
+    updateSql = `
+      UPDATE whatsapp_sessions
+      SET owner_business_id = COALESCE(?, owner_business_id),
+          signup_status = 'disconnected'
+      WHERE waba_id = ?
+    `;
+    values = [ownerBusinessId, wabaId];
+  } else {
+    return;
+  }
+
+  const [result] = await db.execute(updateSql, values);
+  if (result.affectedRows === 0) {
+    const [sessions] = await db.execute(
+      'SELECT 1 FROM whatsapp_sessions WHERE waba_id = ? LIMIT 1',
+      [wabaId]
+    );
+    if (sessions.length === 0) {
+      throw new Error(
+        `No whatsapp_sessions row found for waba_id ${wabaId}; ensure signup data is saved before processing account updates`
+      );
+    }
+  }
+}
+
 // Route for POST requests
 app.post('/', async (req, res) => {
   const timestamp = new Date().toISOString().replace('T', ' ').slice(0, 19);
@@ -136,37 +202,7 @@ app.post('/', async (req, res) => {
           console.log('Solution ID:', wabaInfo.solution_id || null);
           console.log('====================================\n');
 
-          if (
-            event === 'PARTNER_ADDED' ||
-            event === 'PARTNER_APP_INSTALLED'
-          ) {
-            const wabaId = wabaInfo.waba_id;
-            const ownerBusinessId = wabaInfo.owner_business_id;
-
-            if (wabaId) {
-              console.log('SUCCESS: MITRA WHATSAPP TERHUBUNG');
-              console.log('WABA_ID:', wabaId);
-              console.log('CUSTOMER_BUSINESS_ID:', ownerBusinessId);
-
-              // TODO:
-              // Simpan wabaId dan ownerBusinessId ke database Hayaka.
-            } else {
-              console.warn('Account update tidak memiliki WABA ID');
-            }
-          }
-
-          if (
-            event === 'PARTNER_REMOVED' ||
-            event === 'PARTNER_APP_UNINSTALLED'
-          ) {
-            console.warn(
-              'PERHATIAN: Mitra mencabut akses WhatsApp:',
-              wabaInfo.waba_id
-            );
-
-            // TODO:
-            // Tandai koneksi mitra sebagai terputus di database.
-          }
+          await saveAccountUpdate(entry, event, wabaInfo);
 
           continue;
         }
@@ -233,9 +269,24 @@ app.post('/', async (req, res) => {
 });
 
 app.post('/send-message', async (req, res) => {
-  const { session, number, message } = req.body || {};
+  const {
+    session,
+    session_id: sessionIdAlias,
+    number,
+    message,
+  } = req.body || {};
   if (
-    typeof session !== 'string' || !session.trim() ||
+    typeof session === 'string' &&
+    typeof sessionIdAlias === 'string' &&
+    session.trim() !== sessionIdAlias.trim()
+  ) {
+    return res.status(400).json({
+      error: 'session and session_id must refer to the same session',
+    });
+  }
+  const sessionId = session || sessionIdAlias;
+  if (
+    typeof sessionId !== 'string' || !sessionId.trim() ||
     typeof number !== 'string' || !number.trim() ||
     typeof message !== 'string' || !message.trim()
   ) {
@@ -251,11 +302,16 @@ app.post('/send-message', async (req, res) => {
 
   try {
     const [sessions] = await db.execute(
-      'SELECT phone_number_id FROM whatsapp_sessions WHERE session_id = ? LIMIT 1',
-      [session.trim()]
+      'SELECT phone_number_id FROM whatsapp_sessions WHERE session_id = ? LIMIT 2',
+      [sessionId.trim()]
     );
     if (sessions.length === 0) {
       return res.status(404).json({ error: 'WhatsApp session not found' });
+    }
+    if (sessions.length > 1) {
+      return res.status(409).json({
+        error: 'session maps to multiple phone numbers; use a unique session for each WhatsApp number',
+      });
     }
 
     const phoneNumberId = sessions[0].phone_number_id;
